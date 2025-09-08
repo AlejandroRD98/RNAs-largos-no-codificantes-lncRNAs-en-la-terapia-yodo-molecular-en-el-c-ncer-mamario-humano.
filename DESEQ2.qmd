@@ -1,0 +1,903 @@
+---
+title: "DESEQ2 0502"
+format: html
+editor: visual
+execute:
+  warning: false
+  message: false
+---
+
+```{r}
+library(DESeq2) 
+library(pheatmap) 
+library(limma) 
+library(tibble) 
+library(ggplot2)
+library(edgeR)
+library(dplyr) 
+library(ComplexHeatmap)
+library(colorRamp2)
+library(ggplot2)
+```
+
+```{r}
+#Importación de las cuentas de PCG y lncRNAs con anotación
+general <- read.table("../Tabla_general_conteos.txt", header = TRUE) 
+
+#Revisión de la tabla 
+head(general)
+
+```
+
+```{r}
+#Preparación de la tabla de metadatos 
+#Daros de las muestras en el protocolo clinico
+sample = c("LA61","LA62","LA64Y","LA65Y","LB71","LB72","LB74Y","LB75Y","LB76Y","MNR92","MNR93","TPN81","TPN82","TPN83","TPN84Y","TPN85Y","TPN86Y") 
+#Grupo al que pertenece la muestra 
+grupo = c("LA","LA","LA_Y","LA_Y","TNC","TNC","LA_Y","LB_Y","LB_Y","NORM","NORM","TNC","TNC","TNC","TNC_Y","TNC_Y","TNC_Y")
+#Subtipo molecular de la muestra
+subtipo= c("LA","LA","LA","LA","TNC","TNC","LA","LB","LB","NORM","NORM","TNC","TNC","TNC","TNC","TNC","TNC") 
+#Tramiento de la muestra
+tratamiento = c("Plac","Plac","I2","I2","Plac","Plac","I2","I2","I2","Contrl","Contrl","Plac","Plac","Plac","I2","I2","I2")
+#Nuevos nombres de las muestras
+muestra = c("LA_1","LA_2","LA_1Y","LA_2Y","TNC_1","TNC_2","LA_3Y","LB_1Y","LB_2Y","NORM_1","MORM_2","TNC_3","TNC_4","TNC_5","TNC_1Y","TNC_2Y","TNC_3Y")
+
+#Corrida de extracción para correción de batch effect
+extraccion=c(1,2,2,1,2,3,1,2,2,3,1,2,3,1,2,3)
+
+
+#Creación del dataframe con la información del 
+datos = data.frame(sample = sample, Subtipo = subtipo, Tratamiento = tratamiento,Muestra =muestra,Grupo=grupo,Corrida=extraccion)
+
+
+#Correción de datos 
+# Reemplazo "TNC" por "TN" en Subtipo, Grupo y Muestra
+datos$Subtipo <- gsub("^TNC$", "TN", datos$Subtipo)
+datos$Grupo   <- gsub("^TNC", "TN", datos$Grupo)
+datos$Muestra  <- gsub("^TNC", "TN", datos$Muestra)
+
+# Reemplazo "Y" por "I₂" en Subtipo, Grupo y Muestra
+datos$Tratamiento <- gsub("I2$", "I₂", datos$Tratamiento)
+datos$Muestra     <- gsub("Y$", "I₂", datos$Muestra)
+datos$Grupo       <- gsub("_Y$", "-I₂", datos$Grupo)
+
+
+#Revisión de la tabla 
+head(datos)
+```
+
+# Análisis de componentes principales (PCA)
+
+```{r}
+# Construcción del objeto  DESEQDataSet considerando el Tramiento de las muestras
+dds <- DESeqDataSetFromMatrix(general, datos, ~Tratamiento)
+#Selección y filtrado: Solo se mantinen genes con más de 10 cuentas por fila
+keep <- rowSums(counts(dds)) >= 10
+dds <- dds[keep, ] 
+
+# Extracción de las cuentas modificadas por la transformación de varianza estabilizada (VST) 
+vst_data <- vst(dds,blind=FALSE) 
+
+# PCA rápido usando la variable 'Grupo' como agrupamiento
+plotPCA(vst_data, intgroup = "Grupo")
+
+#PCA de los datos con ggplot2
+
+#Establecimiento de los colores de las varibles grupo, tratamiento  y corrida de extracción para visualizar los diferentes PCA
+colores_grupos_PCA <- c(
+  "NORM" = "black",
+  "LA" = "#7ED957",
+  "TN" = "#3F89D0",
+  "LB-I₂" = "red",
+  "LA-I₂" = "#D633FF",
+  "TN-I₂" = "#FFD700" 
+)
+
+colores_tratamiento_PCA <- c(
+  "Contrl" = "black",
+  "Plac"="#66A61E",
+  "I₂" ="yellow"
+ 
+)
+
+
+colores_corrida_PCA <- c(
+  "1" = "#1f77b4",
+  "2"= "#ff7f0e",
+  "3" ="#2ca02c"
+ 
+)
+
+# Extracción de las cuentas para calculo de componentes principales
+vst_data <- assay(vst_data)
+
+# Calculo la varianza de cada gen
+variances <- apply(vst_data, 1, var)
+
+# Ordenar y seleccionar los genes por varianza
+vst_mat_top <- order(variances, decreasing = TRUE)
+
+#Calculo de los valores de los componentes pincipales 
+pca_res <- prcomp(t(vst_mat_top), scale. = TRUE)
+
+
+# Convertir resultados del PCA en un dataframe
+pca_data <- as.data.frame(pca_res$x)
+
+# Añadir los metadatos de las muestra
+pca_data <- cbind(pca_data, colData(dds)[, c("Muestra","Grupo","Corrida","Tratamiento")])
+
+varianza_explicada <- summary(sample_pca)$importance[2, ] * 100
+#Extracción de los valores de los valores del componente principal PC1 a PC4 
+var_PC1 <- round(varianza_explicada[1], 1)
+var_PC2 <- round(varianza_explicada[2], 1)
+var_PC3 <- round(varianza_explicada[3], 1)
+var_PC4 <- round(varianza_explicada[4], 1)
+
+
+##Grafica de PCA para ver batch effect 
+pca_data$Corrida <- as.character(pca_data$Corrida)
+
+pca_plot_T <- ggplot(pca_data, aes(x = PC1, y = PC2, color = Corrida , label = Muestra)) +
+  geom_point(size = 2.5) +
+   geom_polygon(aes(fill = NULL), alpha = 0.2)  +
+  geom_text(vjust = 1.5, hjust = 0.5, size = 5) +
+  scale_color_manual(values = colores_corrida_PCA) +  # <- aquí asignas los colores
+  labs(title = "PC1 vs PC2 ", 
+       x = paste0("PC1 (varianza explicada: ", var_PC1, "%)"), 
+       y = paste0("PC2 (varianza explicada: ", var_PC2, "%)")) +
+  theme_minimal() +
+    theme(
+    axis.title.x = element_text(size = 16),
+    axis.title.y = element_text(size = 16),
+    legend.text = element_text(size = 12),        # tamaño del texto de la leyenda
+    legend.title = element_text(size = 14)     
+    )# tamaño del título de la leyenda
+
+ggsave("../PCA_batch_effect.png", plot = pca_plot_T,
+       width = 8, height = 6, dpi = 300)
+
+
+
+# Grafica PC1-PC2 agrupando por Grupo experimental
+pca_plot <- ggplot(pca_data, aes(x = PC1, y = PC2, color = Grupo, label = Muestra)) +
+  geom_point(size = 2.5) +
+   geom_polygon(aes(fill = NULL), alpha = 0.2)  +
+  geom_text(vjust = 1.5, hjust = 0.5, size = 5) +
+  scale_color_manual(values = colores_grupos_PCA, labels = grupo_labels_expr) +
+  # <- aquí asignas los colores
+  labs(title = "PC1 vs PC2 ", 
+       x = paste0("PC1 (varianza explicada: ", var_PC1, "%)"), 
+       y = paste0("PC2 (varianza explicada: ", var_PC2, "%)")) +
+  theme_minimal() +
+    theme(
+    axis.title.x = element_text(size = 16),
+    axis.title.y = element_text(size = 16),
+    legend.text = element_text(size = 12),        # tamaño del texto de la leyenda
+    legend.title = element_text(size = 14)     
+    )# tamaño del título de la leyenda
+  
+
+
+
+# PCA agrupando por tratamiento visualizando PC1 a PC4
+
+# Creación de etiquetas para la leyenda de colores
+tratamiento_labels <- levels(factor(pca_data$Tratamiento))
+
+
+tratamiento_labels_expr <- list(
+  "Contrl",
+  expression(I[2]),
+  "Plac"
+)
+
+
+
+pca_plot_grupo <- ggplot(pca_data, aes(x = PC1, y = PC2, color = Tratamiento, label = Muestra)) +
+  geom_point(size = 2.5) +
+   geom_polygon(aes(fill = NULL), alpha = 0.2)  +
+  geom_text(vjust = 1.5, hjust = 0.5, size = 5) +
+  scale_color_manual(values = colores_tratamiento_PCA,labels = tratamiento_labels_expr) +  # <- aquí asignas los colores
+  labs(title = "PC1 vs PC2 ", 
+       x = paste0("PC1 (varianza explicada: ", var_PC1, "%)"), 
+       y = paste0("PC2 (varianza explicada: ", var_PC2, "%)")) +
+  theme_minimal() +
+    theme(
+    axis.title.x = element_text(size = 16),
+    axis.title.y = element_text(size = 16),
+    legend.text = element_text(size = 12),        # tamaño del texto de la leyenda
+    legend.title = element_text(size = 14)     
+    )# tamaño del título de la leyenda
+
+ggsave("../PC_tratamiento.png", 
+plot = pca_plot_grupo,
+       width = 8, height = 6, dpi = 300)
+
+
+
+pca_plot2 <- ggplot(pca_data, aes(x = PC2, y = PC3, color = Grupo, label = Muestra)) +
+  geom_point(size = 2.5) +
+   geom_polygon(aes(fill = NULL), alpha = 0.2)  +
+  geom_text(vjust = 1.5, hjust = 0.5, size = 5)  +
+   scale_color_manual(values = colores_grupos_PCA, labels = grupo_labels_expr) + 
+  labs(title = "PC2 vs PC3", 
+       x = paste0("PC2 (varianza explicada: ", var_PC2, "%)"), 
+       y = paste0("PC3 (varianza explicada: ", var_PC3, "%)")) +
+  theme_minimal() +theme(
+    axis.title.x = element_text(size = 16),
+    axis.title.y = element_text(size = 16),
+    legend.text = element_text(size = 12),        # tamaño del texto de la leyenda
+    legend.title = element_text(size = 14)     
+    )# tamaño del título de la leyenda
+  
+
+
+ggsave("../PC2-3_tratamiento.png", plot = pca_plot2,
+       width = 8, height = 6, dpi = 300)
+
+pca_plot3 <- ggplot(pca_data, aes(x = PC3, y = PC4, color = Grupo, label = Muestra)) +
+  geom_point(size = 2.5) +
+   geom_polygon(aes(fill = NULL), alpha = 0.2)  +
+  geom_text(vjust = 1.5, hjust = 0.5, size = 5) +
+   scale_color_manual(values = colores_grupos_PCA, labels = grupo_labels_expr) + 
+  labs(title = "PC3 vs PC4", 
+       x = paste0("PC3 (varianza explicada: ", var_PC3, "%)"), 
+       y = paste0("PC4 (varianza explicada: ", var_PC4, "%)")) +
+  theme_minimal() +theme(
+    axis.title.x = element_text(size = 16),
+    axis.title.y = element_text(size = 16),
+    legend.text = element_text(size = 12),        # tamaño del texto de la leyenda
+    legend.title = element_text(size = 14)     
+    )# tamaño del título 
+ggsave("../PC3-4_tratamiento.png", plot = pca_plot3,
+       width = 8, height = 6, dpi = 300)
+
+
+```
+
+# Análisis de expresión diferencial
+
+```{r}
+
+####Anaisis por tratamiento, utilizando el Sano como control### 
+datos$Tratamiento <- factor(datos$Tratamiento)
+datos$Tratamiento <- relevel(datos$Tratamiento, ref="Contrl") 
+
+dds <- DESeqDataSetFromMatrix(general, datos, ~Tratamiento)
+keep <- rowSums(counts(dds) >= 10) >= 2
+dds <- dds[keep, ]
+
+dds_filter$Tratamiento <- relevel(dds_filter$Tratamiento, ref="Contrl") 
+dds_filter 
+ddsDE <- DESeq(dds_filter) 
+resultsNames(ddsDE)
+
+```
+
+# Analisis por tratamiento
+
+## Normal-Cancer
+
+```{r}
+####Normal_Cancer#### 
+res_sano <- results(ddsDE, contrast=c("Tratamiento","Contrl","Plac"), independentFiltering = FALSE, alpha = 0.05, pAdjustMethod = 'BH', parallel = TRUE,cooksCutoff=FALSE)
+
+summary(res_sano)
+res_norm_shrunken <- lfcShrink(ddsDE, coe ="Tratamiento_Plac_vs_Contrl")
+summary(res_norm_shrunken)  
+
+#Extracción de genes diferencialmente expresados
+DEG_cancer <- res_norm_shrunken[
+complete.cases(res_norm_shrunken[, c("log2FoldChange", "padj")]) &
+abs(res_norm_shrunken$log2FoldChange) >= 1 &
+res_norm_shrunken$padj <= 0.5,
+]
+DEG_cancer
+norm_dif <- DEG_cancer
+
+# Selección de genes sobreexpresados 
+genes_up_cancer_norm <- res_norm_shrunken[complete.cases(res_norm_shrunken$log2FoldChange, res_norm_shrunken$padj) & 
+res_norm_shrunken$log2FoldChange >= 1 & 
+res_norm_shrunken$padj <= 0.05, ]
+genes_up_cancer_norm
+
+# Extracción de lncRNAs sobreexpresados 
+lncRNA_up_cancer_norm <- merge(as.data.frame(genes_up_cancer_norm), lncRNA, by=0)
+lncRNA_up_cancer_norm <- column_to_rownames(lncRNA_up_cancer_norm, var="Row.names")
+
+
+#Selección de genes subexpresados
+genes_down_cancer_norm <- res_norm_shrunken[complete.cases(res_norm_shrunken$log2FoldChange, res_norm_shrunken$padj) & 
+res_norm_shrunken$log2FoldChange <= -1 & 
+res_norm_shrunken$padj <= 0.05, ]
+
+# Extracción de lncRNAs subexpresados 
+lncRNA_down_cancer_norm <- merge(as.data.frame(genes_down_cancer_norm), lncRNA, by=0)
+
+lncRNA_down_cancer_norm <- column_to_rownames(lncRNA_down_cancer_norm, var="Row.names")
+
+#Dataframe con los lncRNAs con expresión aberrante en el cáncer de mama
+lncRNA_norm_dif <- rbind(lncRNA_up_cancer_norm, lncRNA_down_cancer_norm)
+
+
+
+
+
+#Guardado de los resultados 
+write.table(res_norm_shrunken, file = "../DEA_norm.txt",quote = FALSE)
+write.table(lncRNA_norm_dif, file = "../lncRNA_dif_norm.txt",quote = TRUE)
+write.table(norm_dif, file = "../genes_dif_norm.txt",quote = FALSE)
+write.table(genes_up_cancer_norm, file = "../genes_up_cancer.txt",quote = FALSE)
+write.table(lncRNA_up_cancer_norm, file = "../lncRNA_up_cancer.txt",quote = FALSE)
+write.table(genes_down_cancer_norm, file = "../genes_down_cancer.txt",quote = FALSE)
+write.table(lncRNA_down_cancer_norm, file = "../lncRNA_cancer_down.txt",quote = FALSE)
+
+
+# Volcano Plot 
+
+# Definición de forma de los biotipos 
+keyvals.shape <- ifelse(
+  rownames(res_norm_shrunken) %in% rownames(lncRNA), 17,  # 17 = triángulo para lncRNAs
+  ifelse(rownames(res_norm_shrunken) %in% rownames(PCG), 16,  # 16 = circulo para PCG
+  3                                               # 3 = cruz para el resto
+))
+
+# Etiquetación los grupos según la forma
+names(keyvals.shape)[keyvals.shape == 17] <- 'lncRNA'
+names(keyvals.shape)[keyvals.shape == 16]  <- 'PCG'
+names(keyvals.shape)[keyvals.shape == 3]  <- 'otros'
+
+
+
+png("../VolcanoPlot_DEG_cancer.png", width = 15, height = 10, units = "in", res = 300)
+ EnhancedVolcano(res_norm_shrunken,
+  lab = rownames(res_norm_shrunken),
+  x = 'log2FoldChange',
+  y = 'padj',
+  title = 'Normal vs Cáncer de mama',
+  caption = '',
+  pCutoff = 0.05,
+  FCcutoff = 1.0,
+  pointSize = 3.5,
+  labSize = 3.0,
+  shapeCustom = keyvals.shape,     # ← FORMAS: lncRNA y PCG
+  colAlpha = 1,
+  legendPosition = 'right',
+  legendLabSize = 15,
+  legendIconSize = 5.0,
+  drawConnectors = TRUE,
+  widthConnectors = 1.0,
+  colConnectors = 'black',
+  arrowheads = FALSE,
+  gridlines.major = TRUE,
+  gridlines.minor = FALSE,
+  border = 'partial',
+  borderWidth = 1.5,
+  borderColour = 'black')
+
+
+dev.off()
+
+```
+
+## Normal-I2
+
+```{r}
+####Normal_I2#### 
+res_yodo <- results(ddsDE, contrast=c("Tratamiento","I2","Plac"),independentFiltering = FALSE, alpha = 0.05, pAdjustMethod = 'BH', parallel = TRUE,cooksCutoff=FALSE)
+summary(res_yodo)
+
+res_yodo_shrunken <- lfcShrink(ddsDE, coef="Tratamiento_I2_vs_Contrl")
+summary(res_yodo_shrunken)
+
+
+DEG_yodo <- res_yodo_shrunken[
+  complete.cases(res_yodo_shrunken[, c("log2FoldChange", "padj")]) &
+    abs(res_yodo_shrunken$log2FoldChange) >= 1 &
+    res_yodo_shrunken$padj <= 0.5,
+]
+
+yodo_dif <- DEG_yodo
+
+# Selección de genes sobreexpresados 
+genes_up_yodo_norm <- res_yodo_shrunken[complete.cases(res_yodo_shrunken$log2FoldChange, res_yodo_shrunken$padj) & res_yodo_shrunken$log2FoldChange >= 1& 
+res_yodo_shrunken$padj <= 0.05, ]
+genes_up_yodo_norm
+
+# Extracción de lncRNAs sobreexpresados
+lncRNA_up_yodo_norm <- merge(as.data.frame(genes_up_yodo_norm), lncRNA, by=0)
+lncRNA_up_yodo_norm <- column_to_rownames(lncRNA_up_yodo_norm, var ="Row.names")
+
+# Selección de genes subexpresados
+genes_down_yodo_norm <- res_yodo_shrunken[complete.cases(res_yodo_shrunken$log2FoldChange, res_yodo_shrunken$padj) & 
+res_yodo_shrunken$log2FoldChange <= -1 & 
+res_yodo_shrunken$padj <= 0.05, ]
+
+# Extracción de lncRNAs subexpresados
+
+lncRNA_down_yodo_norm <- merge(as.data.frame(genes_down_yodo_norm), lncRNA, by=0)
+lncRNA_down_yodo_norm  <- column_to_rownames(lncRNA_down_yodo_norm , var ="Row.names" )
+
+#Dataframe con los lncRNAs con expresión aberrante en el cáncer de mama
+lncRNA_yodo_dif <- rbind(lncRNA_up_yodo_norm, lncRNA_down_yodo_norm)
+write.table(lncRNA_yodo_dif, file = "../lncRNA_yodo_dif.txt", quote = FALSE)
+
+
+
+#Selección de los genes sin cambios y con significacia estaditica en el grupo I2
+genes_nochange_yodo_norm <- res_yodo_shrunken[
+  complete.cases(res_yodo_shrunken$log2FoldChange, res_yodo_shrunken$padj) & 
+  abs(res_yodo_shrunken$log2FoldChange) < 0.5 & 
+  res_yodo_shrunken$padj <= 0.05, 
+]
+
+#Extracción de los lncRNA sin cambios 
+lncRNA_nochange_yodo_norm <- merge(as.data.frame(genes_nochange_yodo_norm), lncRNA, by=0)
+lncRNA_nochange_yodo_norm <- column_to_rownames(lncRNA_nochange_yodo_norm, var="Row.names")
+
+
+
+
+# Unir genes sobreexpresados y subexpresados
+yodo_dif <- rbind(genes_up_yodo_norm, genes_down_yodo_norm)
+yodo_dif <- as.data.frame(yodo_dif)
+
+
+write.table(res_yodo_shrunken, file = "./DEA_yodo.txt",quote = FALSE)
+write.table(yodo_dif, file = "./genes_dif_yodo.txt",quote = FALSE)
+write.table(genes_up_yodo_norm, file = "./genes_up_cancer_yodo.txt", quote = FALSE)
+write.table(genes_down_yodo_norm, file = "C./genes_down_cancer_yodo.txt", quote = FALSE)
+write.table(lncRNA_yodo_dif, file = "./lncRNA_yodo_dif.txt", quote = FALSE, row.names = FALSE)
+write.table(lncRNA_up_yodo_norm, file = "./lncRNA_up_yodo_norm.txt", quote = FALSE)
+write.table(lncRNA_down_yodo_norm, file = "./lncRNA_down_yodo_norm.txt", quote = FALSE)
+
+write.table(lncRNA_nochange_yodo_norm, file = "./lncRNA_nochange_yodo_norm.txt", quote = FALSE)
+
+#Volcano Plot 
+
+keyvals.shape <- ifelse(
+  rownames(res_yodo_shrunken) %in% rownames(lncRNA), 17,  
+  ifelse(rownames(res_yodo_shrunken) %in% rownames(PCG), 16,  
+  3                                               
+))
+
+names(keyvals.shape)[keyvals.shape == 17] <- 'lncRNA'
+names(keyvals.shape)[keyvals.shape == 16]  <- 'PCG'
+names(keyvals.shape)[keyvals.shape == 3]  <- 'otros'
+
+
+
+png("./VolcanoPlot_DEG_YODO.png", width = 12, height = 8, units = "in", res = 300)
+ EnhancedVolcano(res_yodo_shrunken,
+  lab = rownames(res_yodo_shrunken),
+  x = 'log2FoldChange',
+  y = 'padj',
+  title = 'Normal vs Cáncer de mama Yodo',
+  caption = '',
+  pCutoff = 0.05,
+  FCcutoff = 1.0,
+  pointSize = 3.5,
+  labSize = 3.0,
+  shapeCustom = keyvals.shape,     
+  colAlpha = 1,
+  legendPosition = 'right',
+  legendLabSize = 15,
+  legendIconSize = 5.0,
+  drawConnectors = TRUE,
+  widthConnectors = 1.0,
+  colConnectors = 'black',
+  arrowheads = FALSE,
+  gridlines.major = TRUE,
+  gridlines.minor = FALSE,
+  border = 'partial',
+  borderWidth = 1.5,
+  borderColour = 'black')
+
+
+dev.off()
+
+
+
+
+```
+
+# Analisis por subtipo 
+
+```{r}
+datos$Grupo<- factor(datos$Grupo)
+
+
+dds <- DESeqDataSetFromMatrix(general, datos, ~Grupo)
+keep <- rowSums(counts(dds)) >= 10
+dds_filter <- dds[keep, ]
+dds_filter$Grupo <- factor(dds_filter$Grupo)
+dds_filter$Grupo <- relevel(dds_filter$Grupo, ref="NORM")
+ddsDE <- DESeq(dds_filter)
+resultsNames(ddsDE)
+```
+
+## Norm_LA 
+
+```{r}
+####Norm_LA#### 
+Norm_LA <- results(ddsDE, contrast=c("Grupo","NORM,","Lum"),independentFiltering = FALSE, alpha = 0.05, pAdjustMethod = 'BH', parallel = TRUE,cooksCutoff=FALSE)
+summary(Norm_LA) 
+res_Norm_LA_shrunken <- lfcShrink(ddsDE, coef="Grupo_LA_vs_NORM")
+summary(res_Norm_LA_shrunken)
+
+genes_up_Norm_LA <- res_Norm_LA_shrunken[complete.cases(res_Norm_LA_shrunken$log2FoldChange, res_Norm_LA_shrunken$padj) & 
+(res_Norm_LA_shrunken$log2FoldChange >= 1 & 
+ res_Norm_LA_shrunken$padj <= 0.05), ]
+genes_up_Norm_LA
+
+genes_down_Norm_LA <- res_Norm_LA_shrunken[complete.cases(res_Norm_LA_shrunken$log2FoldChange, res_Norm_LA_shrunken$padj) & 
+(res_Norm_LA_shrunken$log2FoldChange <= - 1 & 
+ res_Norm_LA_shrunken$padj < 0.05), ]
+
+lncRNA_up_Norm_LA <- merge(as.data.frame(genes_up_Norm_LA),lncRNA,by=0)
+lncRNA_up_Norm_LA <- column_to_rownames(lncRNA_up_Norm_LA, var = "Row.names")
+
+lncRNA_down_Norm_LA <- merge(as.data.frame(genes_down_Norm_LA),lncRNA,by=0)
+lncRNA_down_Norm_LA <- column_to_rownames(lncRNA_down_Norm_LA, var = "Row.names")
+
+lncRNA_Norm_LA_dif <- rbind(lncRNA_up_Norm_LA,lncRNA_down_Norm_LA)
+
+
+Norm_LA_dif<-rbind(genes_up_Norm_LA,genes_down_Norm_LA)
+
+
+
+write.table(res_Norm_LA_shrunken, file = "./DEA_Norm_LA.txt",quote = FALSE)
+write.table(Norm_LA_dif, file = "./genes_dif_Norm_LA.txt",quote = FALSE)
+write.table(genes_up_Norm_LA, file = "./genes_up_Norm_LA.txt", quote = FALSE)
+write.table(genes_down_Norm_LA, file = "./genes_down_Norm_LA.txt", quote = FALSE)
+write.table(lncRNA_up_Norm_LA, file = "./lncRNA_up_Norm_LA.txt", quote = FALSE)
+write.table(lncRNA_down_Norm_LA, file = "./lncRNA_down_Norm_LA.txt", quote = FALSE)
+
+
+#Volcano Plot 
+
+keyvals.shape <- ifelse(
+  rownames(res_Norm_LA_shrunken) %in% rownames(lncRNA), 17,  
+  ifelse(rownames(res_Norm_LA_shrunken) %in% rownames(PCG), 16,  
+  3                                           
+))
+
+names(keyvals.shape)[keyvals.shape == 17] <- 'lncRNA'
+names(keyvals.shape)[keyvals.shape == 16]  <- 'PCG'
+names(keyvals.shape)[keyvals.shape == 3]  <- 'otros'
+
+
+
+
+png("./VolcanoPlot_DEG_LA.png", width = 15, height = 10, units = "in", res = 300)
+b<-EnhancedVolcano(res_Norm_LA_shrunken,
+  lab = rownames(res_Norm_LA_shrunken),
+  x = 'log2FoldChange',
+  y = 'padj',
+  title = 'Normal vs Luminal A',
+  caption = '',
+  pCutoff = 0.05,
+  FCcutoff = 1.0,
+  pointSize = 3.5,
+  labSize = 3.0,
+  shapeCustom = keyvals.shape,    
+  colAlpha = 1,
+  legendPosition = 'right',
+  legendLabSize = 15,
+  legendIconSize = 5.0,
+  drawConnectors = TRUE,
+  widthConnectors = 1.0,
+  colConnectors = 'black',
+  arrowheads = FALSE,
+  gridlines.major = TRUE,
+  gridlines.minor = FALSE,
+  border = 'partial',
+  borderWidth = 1.5,
+  borderColour = 'black')
+
+
+dev.off()
+
+
+```
+
+## Norm_LA-I2
+
+```{r}
+####Norm_LA-I2#### 
+Norm_LA_I <- results(ddsDE, contrast=c("Grupo","LA_Y","LA"),independentFiltering = FALSE, alpha = 0.05, pAdjustMethod = 'BH', parallel = TRUE,cooksCutoff=FALSE)
+summary(Norm_LA_I) 
+res_Norm_LA_I_shrunken <- lfcShrink(ddsDE, coef="Grupo_LA_Y_vs_NORM")
+summary(res_Norm_LA_I_shrunken)
+
+
+
+genes_up_Norm_LA_I <- res_Norm_LA_I_shrunken[complete.cases(res_Norm_LA_I_shrunken$log2FoldChange, res_Norm_LA_I_shrunken$padj) & res_Norm_LA_I_shrunken$log2FoldChange >= 1 & 
+res_Norm_LA_I_shrunken$padj <= 0.05, ]
+genes_up_Norm_LA_I
+
+genes_down_Norm_LA_I <- res_Norm_LA_I_shrunken[complete.cases(res_Norm_LA_I_shrunken$log2FoldChange, res_Norm_LA_I_shrunken$padj) & res_Norm_LA_I_shrunken$log2FoldChange <= -1 & 
+res_Norm_LA_I_shrunken$padj <= 0.05, ]
+
+Norm_LA_I_dif <- rbind(genes_up_Norm_LA_I,genes_down_Norm_LA_I)
+
+
+lncRNA_up_Norm_LA_I <- merge(as.data.frame(genes_up_Norm_LA_I),lncRNA,by=0)
+lncRNA_up_Norm_LA_I <- column_to_rownames(lncRNA_up_Norm_LA_I, var = "Row.names")
+
+lncRNA_down_Norm_LA_I <- merge(as.data.frame(genes_down_Norm_LA_I),lncRNA,by=0)
+lncRNA_down_Norm_LA_I <- column_to_rownames(lncRNA_down_Norm_LA_I, var = "Row.names")
+
+lncRNA_Norm_LA_Y_dif <- rbind(lncRNA_up_Norm_LA_I,lncRNA_down_Norm_LA_I)
+
+
+genes_nochange_yodo_LA <- res_Norm_LA_I_shrunken[
+  complete.cases(res_Norm_LA_I_shrunken$log2FoldChange, res_Norm_LA_I_shrunken$padj) &
+  abs(res_Norm_LA_I_shrunken$log2FoldChange) < 0.5 &
+  res_Norm_LA_I_shrunken$padj <= 0.05,
+]
+
+
+
+# Fusionar con lncRNA
+lncRNA_nochange_yodo_LA <- merge(as.data.frame(genes_nochange_yodo_LA), lncRNA, by = 0)
+lncRNA_nochange_yodo_LA <- column_to_rownames(lncRNA_nochange_yodo_LA, var = "Row.names")
+
+
+
+
+
+write.table(res_Norm_LA_I_shrunken, file = "./DEA_Norm_LA_yodo.txt",quote = FALSE)
+write.table(Norm_LA_I_dif, file = "./genes_dif_Norm_LA_yodo.txt",quote = FALSE)
+write.table(genes_up_Norm_LA, file = "./genes_up_Norm_LA.txt", quote = FALSE)
+write.table(genes_down_Norm_LA, file = "./genes_down_Norm_LA.txt", quote = FALSE)
+write.table(lncRNA_up_Norm_LA_I , file = "./lncRNA_up_LA_yodo.txt",quote = FALSE)
+write.table(lncRNA_down_Norm_LA_I , file = "./lncRNA_down_LA_yodo.txt",quote = FALSE)
+write.table(lncRNA_nochange_yodo_LA , file = "./lncRNA_nochange_yodo_LA.txt",quote = FALSE)
+
+keyvals.shape <- ifelse(
+  rownames(res_Norm_LA_I_shrunken) %in% rownames(lncRNA), 17,  
+  ifelse(rownames(res_Norm_LA_I_shrunken) %in% rownames(PCG), 16,  
+  3                                               
+))
+
+
+names(keyvals.shape)[keyvals.shape == 17] <- 'lncRNA'
+names(keyvals.shape)[keyvals.shape == 16]  <- 'PCG'
+names(keyvals.shape)[keyvals.shape == 3]  <- 'otros'
+
+
+png("./VolcanoPlot_DEG_LAYODO.png", width = 12, height = 8, units = "in", res = 300)
+ EnhancedVolcano(res_Norm_LA_I_shrunken,
+  lab = rownames(res_Norm_LA_I_shrunken),
+  x = 'log2FoldChange',
+  y = 'padj',
+  title = 'Normal vs Luminal A Yodo',
+  caption = '',
+  pCutoff = 0.05,
+  FCcutoff = 1.0,
+  pointSize = 3.5,
+  labSize = 3.0,
+  shapeCustom = keyvals.shape,    
+  colAlpha = 1,
+  legendPosition = 'right',
+  legendLabSize = 15,
+  legendIconSize = 5.0,
+  drawConnectors = TRUE,
+  widthConnectors = 1.0,
+  colConnectors = 'black',
+  arrowheads = FALSE,
+  gridlines.major = TRUE,
+  gridlines.minor = FALSE,
+  border = 'partial',
+  borderWidth = 1.5,
+  borderColour = 'black')
+
+
+dev.off()
+```
+
+## Norm_TN
+
+```{r}
+Norm_TN <- results(ddsDE, contrast = c("Grupo", "NORM", "TN"),independentFiltering = FALSE, alpha = 0.05, pAdjustMethod = 'BH', parallel = TRUE,cooksCutoff=FALSE) 
+summary(Norm_TN)
+
+res_Norm_TN_shrunken <- lfcShrink(ddsDE, coef = "Grupo_TN_vs_NORM")
+summary(res_Norm_TN_shrunken)
+
+
+
+DEG_TN <- res_Norm_TNC_shrunken[
+  complete.cases(res_Norm_TNC_shrunken$log2FoldChange, res_Norm_TNC_shrunken$padj) & 
+  abs(res_Norm_TNC_shrunken$log2FoldChange) >= 1 & 
+  res_Norm_TNC_shrunken$padj <= 0.05, 
+]
+
+
+
+
+# Selección de genes upregulados y downregulados para TNC
+genes_up_Norm_TN <- res_Norm_TN_shrunken[complete.cases(res_Norm_TN_shrunken$log2FoldChange, res_Norm_TN_shrunken$padj) & 
+(res_Norm_TN_shrunken$log2FoldChange >= 1 & 
+res_Norm_TN_shrunken$padj <= 0.05), ]
+
+genes_down_Norm_TN <- res_Norm_TN_shrunken[complete.cases(res_Norm_TN_shrunken$log2FoldChange, res_Norm_TN_shrunken$padj) & 
+(res_Norm_TN_shrunken$log2FoldChange <= - 1 & 
+res_Norm_TNC_shrunken$padj <= 0.05), ]
+
+
+lncRNA_up_Norm_TN <- merge(as.data.frame(genes_up_Norm_TN), lncRNA, by = 0)
+rownames(lncRNA_up_Norm_TN) <- NULL
+lncRNA_up_Norm_TN <- column_to_rownames(lncRNA_up_Norm_TN , var = "Row.names")
+
+lncRNA_down_Norm_TN <- merge(as.data.frame(genes_down_Norm_TN), lncRNA, by = 0)
+lncRNA_down_Norm_TN <- column_to_rownames(lncRNA_down_Norm_TN , var = "Row.names")
+
+
+lncRNA_Norm_TN_dif <- rbind(lncRNA_up_Norm_TN, lncRNA_down_Norm_TN)
+
+
+
+
+
+
+Norm_TN_dif <- rbind(genes_up_Norm_TN,genes_down_Norm_TN)
+
+write.table(res_Norm_TN_shrunken, file="./DEA_Norm_TN.txt", quote=FALSE)
+write.table(Norm_TN_dif, file="./genes_dif_Norm_TN.txt", quote=FALSE)
+write.table(lncRNA_up_Norm_TN, file = "./lncRNA_up_Norm_TN.txt",quote = FALSE)
+write.table(lncRNA_down_Norm_TN, file = "./lncRNA_down_Norm_TN.txt",quote = FALSE)
+
+
+
+
+keyvals.shape <- ifelse(
+  rownames(res_Norm_TN_shrunken) %in% rownames(lncRNA), 17, 
+  ifelse(rownames(res_Norm_TN_shrunken) %in% rownames(PCG), 16,  
+  3                                               
+))
+
+
+names(keyvals.shape)[keyvals.shape == 17] <- 'lncRNA'
+names(keyvals.shape)[keyvals.shape == 16]  <- 'PCG'
+names(keyvals.shape)[keyvals.shape == 3]  <- 'otros'
+
+
+
+png("C./VolcanoPlot_DEG_TN.png", width = 15, height = 10, units = "in", res = 300)
+EnhancedVolcano(res_Norm_TN_shrunken,
+  lab = rownames(res_Norm_TN_shrunken),
+  x = 'log2FoldChange',
+  y = 'padj',
+  title = 'Triple Negativo vs Normal',
+  caption = '',
+  pCutoff = 0.05,
+  FCcutoff = 1.0,
+  pointSize = 3.5,
+  labSize = 3.0,
+  shapeCustom = keyvals.shape,     
+  colAlpha = 1,
+  legendPosition = 'right',
+  legendLabSize = 15,
+  legendIconSize = 5.0,
+  drawConnectors = TRUE,
+  widthConnectors = 1.0,
+  colConnectors = 'black',
+  arrowheads = FALSE,
+  gridlines.major = TRUE,
+  gridlines.minor = FALSE,
+  border = 'partial',
+  borderWidth = 1.5,
+  borderColour = 'black')
+
+
+
+png("./VolcanoPlot_DEG_YODO.png", width = 12, height = 8, units = "in", res = 300)
+
+
+```
+
+## Norm_TN-I2
+
+```{r}
+Norm_TNC_Y <- results(ddsDE, contrast = c("Grupo", "TNC_Y", "NORM"), independentFiltering = TRUE, alpha = 0.05, pAdjustMethod = 'BH', parallel = TRUE,cooksCutoff=FALSE)
+summary(Norm_TNC_Y)
+res_Norm_TNC_Y_shrunken <- lfcShrink(ddsDE, coef = "Grupo_TNC_Y_vs_NORM")
+summary(res_Norm_TNC_Y_shrunken)
+
+DEG_TNCY <- res_Norm_TNC_Y_shrunken[
+  complete.cases(res_Norm_TNC_Y_shrunken$log2FoldChange, res_Norm_TNC_Y_shrunken$padj) & 
+  abs(res_Norm_TNC_Y_shrunken$log2FoldChange) >= 0.8 & 
+  res_Norm_TNC_Y_shrunken$padj <= 0.1, 
+]
+
+DEG_TNCY 
+
+# Selección de genes upregulados y downregulados para TNC_Y
+genes_up_Norm_TNC_Y <- res_Norm_TNC_Y_shrunken[complete.cases(res_Norm_TNC_Y_shrunken$log2FoldChange, res_Norm_TNC_Y_shrunken$padj) & res_Norm_TNC_Y_shrunken$log2FoldChange >= 1 & 
+res_Norm_TNC_Y_shrunken$padj <= 0.05, ]
+
+genes_down_Norm_TNC_Y <- res_Norm_TNC_Y_shrunken[complete.cases(res_Norm_TNC_Y_shrunken$log2FoldChange, res_Norm_TNC_Y_shrunken$padj) & res_Norm_TNC_Y_shrunken$log2FoldChange <= -1 & 
+res_Norm_TNC_Y_shrunken$padj < 0.05, ]
+
+Norm_TNC_Y_dif <- rbind(genes_up_Norm_TNC_Y, genes_down_Norm_TNC_Y)
+
+
+lncRNA_up_Norm_TNC_Y <- merge(as.data.frame(genes_up_Norm_TNC_Y), lncRNA, by = 0)
+
+lncRNA_down_Norm_TNC_Y <- merge(as.data.frame(genes_down_Norm_TNC_Y), lncRNA, by = 0)
+
+lncRNA_up_Norm_TNC_Y <- column_to_rownames(lncRNA_up_Norm_TNC_Y , var = "Row.names")
+
+lncRNA_down_Norm_TNC_Y <- column_to_rownames(lncRNA_down_Norm_TNC_Y , var = "Row.names")
+
+lncRNA_Norm_TNC_Y_dif <- rbind(lncRNA_up_Norm_TNC_Y, lncRNA_down_Norm_TNC_Y)
+
+genes_nochange_yodo_TNC <- res_Norm_TNC_Y_shrunken[
+  complete.cases(res_Norm_TNC_Y_shrunken$log2FoldChange, res_Norm_TNC_Y_shrunken$padj) &
+  abs(res_Norm_TNC_Y_shrunken$log2FoldChange) < 0.5 &
+  res_Norm_TNC_Y_shrunken$padj <= 0.05,
+]
+# Fusionar con lncRNA
+lncRNA_nochange_yodo_TNC <- merge(as.data.frame(genes_nochange_yodo_TNC), lncRNA, by = 0)
+lncRNA_nochange_yodo_TNC <- column_to_rownames(lncRNA_nochange_yodo_TNC, var = "Row.names")
+
+
+
+
+
+
+write.table(res_Norm_TNC_Y_shrunken, file="./DEA_Norm_TN_yodo.txt", quote=FALSE)
+write.table(Norm_TNC_Y_dif, file="./genes_dif_Norm_TN_yodo.txt", quote=FALSE)
+write.table(lncRNA_up_Norm_TNC_Y, file = "./lncRNA_up_Norm_TN_yodo.txt",quote = FALSE)
+write.table(lncRNA_down_Norm_TNC_Y, file = "./lncRNA_down_Norm_TN_yodo.txt",quote = FALSE)
+
+
+
+keyvals.shape <- ifelse(
+  rownames(res_Norm_TNC_Y_shrunken) %in% rownames(lncRNA), 17, 
+  ifelse(rownames(res_Norm_TNC_Y_shrunken) %in% rownames(PCG), 16, 
+  3
+))
+
+# Etiqueta los grupos según la forma
+names(keyvals.shape)[keyvals.shape == 17] <- 'lncRNA'
+names(keyvals.shape)[keyvals.shape == 16]  <- 'PCG'
+names(keyvals.shape)[keyvals.shape == 3]  <- 'otros'
+
+
+png("./VolcanoPlot_DEG_TNCY.png", width = 12, height = 8, units = "in", res = 300)
+EnhancedVolcano(res_Norm_TNC_Y_shrunken,
+  lab = rownames(res_Norm_TNC_Y_shrunken),
+  x = 'log2FoldChange',
+  y = 'padj',
+  title = 'Normal vs Triple Negativo Yodo',
+  caption = '',
+  pCutoff = 0.05,
+  FCcutoff = 1.0,
+  pointSize = 3.5,
+  labSize = 3.0,
+  shapeCustom = keyvals.shape,
+  colAlpha = 1,
+  legendPosition = 'right',
+  legendLabSize = 15,
+  legendIconSize = 5.0,
+  drawConnectors = TRUE,
+  widthConnectors = 1.0,
+  colConnectors = 'black',
+  arrowheads = FALSE,
+  gridlines.major = TRUE,
+  gridlines.minor = FALSE,
+  border = 'partial',
+  borderWidth = 1.5,
+  borderColour = 'black')
+ 
+
+
+dev.off()
+
+
+```
