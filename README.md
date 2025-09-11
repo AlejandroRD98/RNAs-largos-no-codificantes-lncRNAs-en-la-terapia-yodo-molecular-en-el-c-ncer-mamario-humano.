@@ -10,3 +10,11 @@ lncRNA_PCG_names.R : Archivo para la lectura de los nombres y creación de los d
 DESEQ2.qmd: Archivo con el codigo utilizado la realización del analiis de componentes principales (PCA) y analisis de expresión diferencial en DESeq2 
 
 enrichment_KEGG.R: 
+
+graficas.R:
+
+WGCNA.R:
+
+
+
+
