@@ -1,6 +1,6 @@
 # RNAs largos no codificantes (lncRNAs) en la terapia yodo molecular en el cancer mamario humano.
 
-<img src="https://github.com/AlejandroRD98/RNAs-largos-no-codificantes-lncRNAs-en-la-terapia-yodo-molecular-en-el-c-ncer-mamario-humano./blob/main/Imagenes/DEG_summary.png"/>
+<img src="https://github.com/AlejandroRD98/RNAs-largos-no-codificantes-lncRNAs-en-la-terapia-yodo-molecular-en-el-c-ncer-mamario-humano./blob/main/Imagenes/lncRNA_cancer_exp.png?raw=true"/>
 
 
 Codigo de R utilizado para el analisis de expresión diferencial, enriquecimiento de vías y analisis de co-expresión de los datos de secuenciación de RNAseq de la tesis "RNAs largos no codificantes (lncRNAs) en la terapia yodo molecular en el cancer mamario humano".
