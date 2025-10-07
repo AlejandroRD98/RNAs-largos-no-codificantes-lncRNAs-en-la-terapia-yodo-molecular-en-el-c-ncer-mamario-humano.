@@ -17,6 +17,7 @@ WGCNA.R: Codigo de R utilizado para la construccion de la red de co-espresión, 
 
 Figuras_suplmentarias.R: Codigos de R de las figuras suplementarias.
 
+ProcesamientoDatosCrudos : Codigos de Bash para la limpieza, alineamiento y elimado de los duplicados de PCR de los datos crudos.
 
 
 
