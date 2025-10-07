@@ -1,0 +1,45 @@
+# Trimgalore 
+muestras=("LA61" "LA62" "LA63" "LA64Y" "LA65Y" "LB71" "LB72" "LB73" "LB74Y" "LB75Y")
+
+for muestra in "${muestras[@]}";do
+        echo -e "$DIR/${muestra}/${muestra}"
+        trim_galore -q 30 --phred33  --illumina --paired --length 30  --clip_R1 12 --clip_R2 12 --three_prime_clip_R1 2 --three_prime_clip_R2 2 \
+        -o /mnt/Guanina/caceves/aruiz/3trimgalore \
+        "$DIR/${muestra}/${muestra}_1.fq" \
+        "$DIR/${muestra}/${muestra}_2.fq"
+
+done
+
+
+#Alineamiento HISAT2
+for muestra in "${muestras[@]}";do
+
+hisat2 -p 32 --rg-id="${muestra}" --rg SM:"${muestra}" \
+       -x GRCh38_ensemble --dta  \
+       -1 "$BASE_DIR/${muestra}_1_val_1.fq" \
+       -2 "$BASE_DIR/${muestra}_2_val_2.fq" \
+
+done
+
+#Eliminación duplicados de PCR SamTools
+:w!:w
+for muestra in "${muestras[@]}"; do
+    # 1️⃣ Ordenar por nombre antes de fixmate
+    samtools sort -n -o "${muestra}_name_sorted.bam" "${muestra}_sorted.bam"
+    #
+    #         # 2️⃣ Aplicar fixmate (solo en BAM ordenado por nombre)
+    samtools fixmate -m "${muestra}_name_sorted.bam" "${muestra}_fixmate.bam"
+    #
+    #                 # 3️⃣ Ordenar por coordenadas después de fixmate
+    samtools sort -o "${muestra}_sorted.bam" "${muestra}_fixmate.bam"
+    #
+    #                         # 4️⃣ Remover duplicados con markdup (requiere orden por coordenadas)
+    samtools markdup -r "${muestra}_sorted.bam" "${muestra}_sorted_deduplicado.bam"
+    #
+    #                                 # (Opcional) Limpiar archivos intermedios para ahorrar espacio
+    rm "${muestra}_name_sorted.bam" "${muestra}_fixmate.bam"
+    #                                     done
+    #
+
+
+done
